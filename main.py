@@ -43,7 +43,7 @@ def mse(y_true, y_pred):
     return np.mean((y_true - y_pred)**2)
 
 if __name__ == "__main__":
-    net = NN([(3, 10), (10, 10), (10, 2)])
+    net = NN([(3, 10), (10, 10), (10,150), (150,10), (10, 2)])
     x = np.random.randn(100, 3)
     y = np.concatenate((np.atleast_2d(x[:,0]).T, np.atleast_2d(x[:,1] + x[:,2]).T))
     #print(np.atleast_2d(x[0]).T, np.atleast_2d(x[1] + x[2]).T)
