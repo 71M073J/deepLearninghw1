@@ -1,11 +1,17 @@
 import numpy as np
+import matplotlib.pyplot as plt
 
+def cross_entropy(y_true, y_pred, eps=1e-180):
 
-def cross_entropy(y_true, y_pred):
-    return -np.mean(y_true * np.log(y_pred))
+    y_pred = np.clip(y_pred, eps, 1. - eps)
 
+    N = y_true.shape[0]
+    suma = np.sum(y_true * np.log(y_pred))
+    return -suma/N
 
 def sigmoid(x):
+    x = np.clip(x, -512, 512)
+
     return 1 / (1 + np.exp(-x))
 
 
@@ -30,9 +36,6 @@ def linear(x):
 def linear_derivative(x):
     return np.ones_like(x)
 
-
-def mse(y_true, y_pred):
-    return np.mean((y_true - y_pred) ** 2)
 
 
 class NN:
@@ -65,7 +68,7 @@ class NN:
             a = self.activation_functions[i](z)
             if i != len(self.weights) - 1:
                 # Apply dropout
-                if self.training:
+                if self.training and self.dropout_prob > 0:
                     mask = np.random.binomial(1, 1 - self.dropout_prob, size=a.shape) / (1 - self.dropout_prob)
                     dropout_masks.append(mask)
                     a *= mask
@@ -82,12 +85,14 @@ class NN:
             delta[i] = np.dot(delta[i + 1], self.weights[i + 1].T) * self.activation_derivatives[i](
                 np.dot(activations[i], self.weights[i]) + self.biases[i])
             # Apply dropout
-            delta[i] *= dropout_masks[i + 1]
+            if self.dropout_prob > 0:
+                delta[i] *= dropout_masks[i + 1]
+
+        self.t += 1
         for i in range(len(self.weights)):
             grad_w = np.dot(activations[i].T, delta[i])
-            grad_b = np.sum(delta[i], axis=0, keepdims=True)
+            grad_b = np.sum(delta[i], axis=0, keepdims=True)#DELTA ZA BIASE POSEBEJ !!
             if self.adam:
-                self.t += 1
                 self.m_w[i] = self.beta_1 * self.m_w[i] + (1 - self.beta_1) * grad_w
                 self.v_w[i] = self.beta_2 * self.v_w[i] + (1 - self.beta_2) * np.square(grad_w)
                 self.m_b[i] = self.beta_1 * self.m_b[i] + (1 - self.beta_1) * grad_b
@@ -101,10 +106,11 @@ class NN:
             else:
                 # print(np.dot(activations[i].T, delta[i]))
                 self.weights[i] -= self.learning_rate * np.dot(activations[i].T, delta[i])
+                # DELTA ZA BIASE POSEBEJ !!
                 self.biases[i] -= self.learning_rate * np.sum(delta[i], axis=0, keepdims=True)
 
-        return self.loss(y, activations[-1])
-
+        a = self.loss(y, activations[-1])
+        return a
     def train(self, x, y, epochs, batch_size):
         losses = []
         for i in range(epochs):
@@ -116,12 +122,14 @@ class NN:
                 x_batch = x[j:j + batch_size]
                 y_batch = y[j:j + batch_size]
                 #activations, dropout_masks = self.forward(x_batch)
-                loss += self.backprop(x_batch, y_batch)
-
-            losses.append(loss / num_batches)
-            if i < 100:
+                curlos = self.backprop(x_batch, y_batch)
+                loss += curlos
+                print(curlos)
+            losses.append(loss)
+            if i < 1000:
                 print(f"Iteration {i}: loss = {losses[-1]}")
-
+        plt.plot(range(len(losses) - 2), losses[2:])
+        plt.show()
     def predict(self, x):
         self.training = False
         activations, _ = self.forward(x)
@@ -131,30 +139,50 @@ class NN:
 
 
 if __name__ == "__main__":
-    net = NN([(3, 50), (50,50),(50,2)], learning_rate=0.01, dropout=0.5, adam=False)
-    size = 10000
-    x = np.random.randn(size, 3)
-    y = np.concatenate((np.atleast_2d(x[:, 0]) > 0, np.atleast_2d(x[:, 0]) <= 0)).T
+    import pickle
+    with open("./DL_HW1/data/train_data.pckl", "rb") as f:
+        x = pickle.load(f)
+    y = np.zeros((x["data"].shape[0],x["labels"].max() + 1))
+    y[range(y.shape[0]),x["labels"]] = 1
+    #net = NN([(3072,1024),(1024,256),(256,64),(64,10)], learning_rate=0.1, dropout=0.1, adam=True)
+    net = NN([(3072,256),(256,10)], learning_rate=0.1, dropout=0.01, adam=False)
+    net.train(x["data"], y, 10, 1000)
+
+    with open("./DL_HW1/data/test_data.pckl", "rb") as ft:
+        xt = pickle.load(ft)
+
+    preds = net.predict(x["data"])
+    print((x["data"].shape[0] - np.count_nonzero(x["labels"] - np.argmax(preds, axis=1))) / x["data"].shape[0])
+    quit()
+    input_size = 2
+    net = NN([(input_size, 1),(1,2)], learning_rate=0.1, dropout=0.0, adam=False)
+    size = 1000
+    x = np.random.randn(size, input_size)
+    y = (-x[:,0] + x[:,1]) > 0
     print(y.shape)
     # print(np.atleast_2d(x[0]).T, np.atleast_2d(x[1] + x[2]).T)
     # print(y)
     x_train = x
-    y_train = y
+    y_train = np.atleast_2d(y.astype(np.float32)).T
+    y_train = np.concatenate((y_train.T, 1 - y_train.T)).T
+
     batch_size = 100
-    epochs = 50
+    epochs = 100
     num_batches = len(x_train) // batch_size
     net.train(x_train, y_train, epochs, batch_size)
 
     preds = net.predict(x)
 
-    print((size - np.count_nonzero(np.argmax(y, axis=1) - np.argmax(preds, axis=1)))/size)
-    print(cross_entropy(y, preds))
+    print((size - np.count_nonzero(np.argmax(y_train, axis=1) - np.argmax(preds, axis=1)))/size)
+    print(cross_entropy(y_train, preds))
 
 
-    test_size = 1000
-    x = np.random.randn(test_size, 3)
-    y = np.concatenate((np.atleast_2d(x[:, 0]) > 1, np.atleast_2d(x[:, 0]) <= 1)).T
+    test_size = 100000
+    x = np.random.randn(test_size, input_size)
+    y = (-x[:,0] + x[:,1]) > 0
+    y_train = np.atleast_2d(y.astype(np.float32)).T
+    y = np.concatenate((y_train.T, 1 - y_train.T)).T
     preds = net.predict(x)
     #print(preds, argmaxs)
-    print((test_size - np.count_nonzero(np.argmax(y, axis=1) - np.argmax(preds, axis=1)))/test_size)
+    print((test_size - (np.count_nonzero(np.argmax(y, axis=1) - np.argmax(preds, axis=1))))/test_size)
     print(cross_entropy(y, preds))
